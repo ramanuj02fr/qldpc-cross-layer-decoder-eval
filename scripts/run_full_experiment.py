@@ -164,7 +164,9 @@ def main() -> None:
     # ---------------- Phase 4: queue simulator ----------------
     print("\n=== Phase 4: FIFO / EDF queue simulator ===")
     DEADLINE_VALUES_S = [200e-6, 500e-6, 1000e-6, 2000e-6, 5000e-6, 10000e-6]
-    SIM_DURATION_S = 0.2 if args.quick else 2.0
+    SIM_DURATION_S = 0.5 if args.quick else 2.0
+    WARMUP_FRAC = 0.1  # discard the first 10% of sim time from metrics (queue starts empty)
+    QUEUE_SEEDS = range(3) if args.quick else range(10)
     DEADLINE_S = 500e-6
 
     mean_us_by_decoder = ref_summary_df["mean_us"]
@@ -174,22 +176,56 @@ def main() -> None:
         "burst": 1.0 / mean_us_by_decoder.max() * 1e6 * 1.05,
     }
     print("Workload arrival rates (Hz):", workload_scenarios)
+    print(f"Queue sim: {len(list(QUEUE_SEEDS))} seeds per (decoder, scenario, deadline), "
+          f"warmup={WARMUP_FRAC*100:.0f}% of sim duration discarded from metrics.")
 
+    # Each (decoder, scenario, deadline, policy) point is run across QUEUE_SEEDS
+    # independent arrival sequences (see queue_sim.simulate_queue_multi_seed) --
+    # a single-seed run's deadline-miss-rate is one draw of a random process,
+    # and a headline number like "X% relative reduction" needs a CI to be
+    # trustworthy. `_mean` columns are used for plotting (drop-in replacement
+    # for the old single-seed values); `_stderr` columns give the CI.
     queue_records = []
     for decoder_name, g in ref_bench_df.groupby("decoder"):
         service_times_s = g["runtime_s"].values
         for scenario_name, arrival_rate in workload_scenarios.items():
             for deadline_s in DEADLINE_VALUES_S:
-                fifo_metrics = queue_sim.simulate_queue(service_times_s, arrival_rate, deadline_s, SIM_DURATION_S)
-                fifo_metrics.update({"decoder": decoder_name, "scenario": scenario_name,
-                                      "policy": "FIFO", "deadline_us": deadline_s * 1e6})
-                queue_records.append(fifo_metrics)
-
-                edf_metrics = queue_sim.simulate_queue_edf(service_times_s, arrival_rate, deadline_s, SIM_DURATION_S)
-                edf_metrics.update({"decoder": decoder_name, "scenario": scenario_name,
-                                     "policy": "EDF", "deadline_us": deadline_s * 1e6})
-                queue_records.append(edf_metrics)
+                warmup_s = WARMUP_FRAC * SIM_DURATION_S
+                for policy, sim_fn in [("FIFO", queue_sim.simulate_queue), ("EDF", queue_sim.simulate_queue_edf)]:
+                    agg = queue_sim.simulate_queue_multi_seed(
+                        sim_fn, service_times_s, arrival_rate, deadline_s, SIM_DURATION_S,
+                        seeds=QUEUE_SEEDS, warmup_s=warmup_s,
+                    )
+                    row = {
+                        "decoder": decoder_name, "scenario": scenario_name,
+                        "policy": policy, "deadline_us": deadline_s * 1e6,
+                        "n_seeds": agg["n_seeds"],
+                    }
+                    for key in ("deadline_miss_rate", "p50_response_s", "p99_response_s",
+                                "max_queue_len", "mean_queue_len", "goodput_hz"):
+                        row[key] = agg.get(f"{key}_mean", float("nan"))
+                        row[f"{key}_stderr"] = agg.get(f"{key}_stderr", float("nan"))
+                    queue_records.append(row)
     queue_df = pd.DataFrame(queue_records)
+
+    # Fix #4 sanity check: confirm the burst (mild-overload) scenario's metrics
+    # are stable w.r.t. simulation duration / warm-up, not a transient artifact
+    # of starting from an empty queue. Only runs once (fixed deadline/decoder),
+    # since it's a spot-check, not swept across the whole grid.
+    print("\n--- Warm-up / duration sensitivity check (burst scenario) ---")
+    check_decoder = ref_bench_df["decoder"].iloc[0]
+    check_service_times = ref_bench_df[ref_bench_df["decoder"] == check_decoder]["runtime_s"].values
+    check_arrival_rate = workload_scenarios["burst"]
+    for duration_s, warmup_frac in [(SIM_DURATION_S, 0.0), (SIM_DURATION_S, WARMUP_FRAC),
+                                     (SIM_DURATION_S * 5, WARMUP_FRAC)]:
+        agg = queue_sim.simulate_queue_multi_seed(
+            queue_sim.simulate_queue_edf, check_service_times, check_arrival_rate, DEADLINE_S,
+            duration_s, seeds=QUEUE_SEEDS, warmup_s=warmup_frac * duration_s,
+        )
+        print(f"  duration={duration_s:.1f}s warmup_frac={warmup_frac:.2f} -> "
+              f"miss_rate={agg['deadline_miss_rate_mean']:.4f} +/- {agg['deadline_miss_rate_stderr']:.4f}")
+    print("If these three numbers don't agree within ~1-2 stderr, the default "
+          "SIM_DURATION_S/WARMUP_FRAC above are too small and should be increased.")
 
     # ---------------- Phase 5: final comparison plots ----------------
     print("\n=== Phase 5: final comparison plots ===")

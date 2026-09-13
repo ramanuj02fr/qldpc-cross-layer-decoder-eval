@@ -50,14 +50,26 @@ def plot_code_capacity_ler(code_obj, figures_dir: str, num_samples: int = 2000):
 
 
 def plot_runtime_vs_error_rate(summary_df, figures_dir: str):
-    """Phase 2B figure: p50/p99 runtime vs physical error rate."""
+    """Phase 2B figure: p50/p99 runtime vs physical error rate, with a shaded
+    bootstrap-CI band around each percentile so tail-latency claims (the
+    core real-time argument) show their own uncertainty, not just a point
+    estimate per physical error rate.
+    """
     fig, axes = plt.subplots(1, 2, figsize=(12, 5), sharey=True)
     for ax, pct_col, pct_label in zip(axes, ["p50_us", "p99_us"], ["p50", "p99"]):
+        lo_col, hi_col = f"{pct_label}_ci_lower_us", f"{pct_label}_ci_upper_us"
+        has_ci = lo_col in summary_df.columns and hi_col in summary_df.columns
         for decoder_name, g in summary_df.groupby("decoder"):
             g = g.sort_values("phys_error_rate")
-            ax.plot(g["phys_error_rate"], g[pct_col], marker="o", label=decoder_name)
+            line, = ax.plot(g["phys_error_rate"], g[pct_col], marker="o", label=decoder_name)
+            if has_ci:
+                ax.fill_between(g["phys_error_rate"], g[lo_col], g[hi_col],
+                                 color=line.get_color(), alpha=0.2)
         ax.set_xlabel("physical error rate")
-        ax.set_title(f"{pct_label} runtime vs physical error rate")
+        title = f"{pct_label} runtime vs physical error rate"
+        if has_ci:
+            title += "\n(shaded = bootstrap 95% CI)"
+        ax.set_title(title)
         ax.set_yscale("log")
         ax.grid(True, which="both", alpha=0.3)
     axes[0].set_ylabel("runtime (microseconds)")
@@ -84,17 +96,31 @@ def plot_runtime_ecdf(ref_bench_df, reference_p: float, figures_dir: str):
 
 
 def plot_ler_vs_p99(ref_summary_df, reference_p: float, figures_dir: str):
-    """Phase 2B figure: the 'killer graph' -- LER vs p99 runtime, at REFERENCE_P."""
+    """Phase 2B figure: the 'killer graph' -- LER vs p99 runtime, at REFERENCE_P.
+
+    Draws horizontal error bars from the p99 bootstrap CI when available, so
+    it's visible whether two decoders' p99 values actually separate or just
+    look different as point estimates.
+    """
+    has_ci = "p99_ci_lower_us" in ref_summary_df.columns and "p99_ci_upper_us" in ref_summary_df.columns
     fig, ax = plt.subplots(figsize=(5.5, 5))
     for name, row in ref_summary_df.iterrows():
-        ax.scatter(row["p99_us"], row["logical_error_rate"], s=80, label=name)
+        if has_ci:
+            xerr = [[row["p99_us"] - row["p99_ci_lower_us"]], [row["p99_ci_upper_us"] - row["p99_us"]]]
+            ax.errorbar(row["p99_us"], row["logical_error_rate"], xerr=xerr,
+                        fmt="o", markersize=8, capsize=4, label=name)
+        else:
+            ax.scatter(row["p99_us"], row["logical_error_rate"], s=80, label=name)
         ax.annotate(name, (row["p99_us"], row["logical_error_rate"]),
                     textcoords="offset points", xytext=(6, 4))
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.set_xlabel("p99 runtime (microseconds)")
     ax.set_ylabel("logical error rate")
-    ax.set_title(f"Logical Error Rate vs Tail Latency (p = {reference_p})")
+    title = f"Logical Error Rate vs Tail Latency (p = {reference_p})"
+    if has_ci:
+        title += "\n(horizontal bars = bootstrap 95% CI on p99)"
+    ax.set_title(title)
     ax.grid(True, which="both", alpha=0.3)
     plt.tight_layout()
     return _save(fig, figures_dir, "04_phase2B_ler_vs_p99")
@@ -140,20 +166,34 @@ def plot_circuit_level_ler(circuit_df, code_obj, figures_dir: str):
 
 def plot_missrate_vs_workload(queue_df, deadline_s: float, reference_p: float,
                                figures_dir: str, scenario_order=("normal", "moderate", "burst")):
-    """Phase 5 figure: deadline miss rate vs workload scenario, FIFO vs EDF."""
+    """Phase 5 figure: deadline miss rate vs workload scenario, FIFO vs EDF.
+
+    Draws vertical error bars from `deadline_miss_rate_stderr` (standard
+    error across queue-simulation seeds) when that column is present, so a
+    claim like "EDF halves the miss rate" can be checked against the
+    seed-to-seed variance, not just two point estimates.
+    """
     default_slice = queue_df[queue_df["deadline_us"] == deadline_s * 1e6]
+    has_err = "deadline_miss_rate_stderr" in queue_df.columns
     fig, axes = plt.subplots(1, 2, figsize=(11, 5), sharey=True)
     for ax, policy in zip(axes, ["FIFO", "EDF"]):
         sub = default_slice[default_slice["policy"] == policy]
         for decoder_name, g in sub.groupby("decoder"):
             g = g.set_index("scenario").loc[list(scenario_order)]
-            ax.plot(scenario_order, g["deadline_miss_rate"], marker="o", label=decoder_name)
+            if has_err:
+                ax.errorbar(scenario_order, g["deadline_miss_rate"], yerr=g["deadline_miss_rate_stderr"],
+                            marker="o", capsize=4, label=decoder_name)
+            else:
+                ax.plot(scenario_order, g["deadline_miss_rate"], marker="o", label=decoder_name)
         ax.set_xlabel("workload scenario")
         ax.set_title(f"{policy} scheduling")
         ax.grid(True, alpha=0.3)
     axes[0].set_ylabel("deadline miss rate")
     axes[1].legend()
-    fig.suptitle(f"Deadline Miss Rate vs Workload (deadline = {deadline_s*1e6:.0f} us, p={reference_p})")
+    title = f"Deadline Miss Rate vs Workload (deadline = {deadline_s*1e6:.0f} us, p={reference_p})"
+    if has_err:
+        title += "\n(error bars = standard error across queue-sim seeds)"
+    fig.suptitle(title)
     plt.tight_layout()
     return _save(fig, figures_dir, "06_phase5_missrate_vs_workload")
 
