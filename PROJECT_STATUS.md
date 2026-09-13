@@ -305,6 +305,33 @@ against synthetic data in this session, since a live `qldpc`/`ldpc` install
 `scripts/run_full_experiment.py` for real and sanity-check the new CI widths
 and multi-seed queue numbers on actual data, not just synthetic smoke tests.
 
+## Real-data verification (2026-09-14, user's Colab, CPU runtime)
+
+`scripts/run_full_experiment.py --quick --skip-beamsearch` was run end-to-end
+on Colab against the real `[[144,12,12]]` code (not synthetic data). Result:
+**all 5 phases completed with no errors**, all 8 figures + CSVs +
+`environment_info.txt` generated and zipped successfully.
+
+Notably, the warm-up/duration sensitivity check (Fix #3 above) produced:
+```
+duration=0.5s warmup_frac=0.00 -> miss_rate=0.2726 +/- 0.0103
+duration=0.5s warmup_frac=0.10 -> miss_rate=0.2700 +/- 0.0090
+duration=2.5s warmup_frac=0.10 -> miss_rate=0.2685 +/- 0.0009
+```
+All three agree within ~1-2 stderr of each other, and the 5x-longer run has a
+visibly tighter stderr as expected -- this is itself evidence the check
+works as intended, and that the default `SIM_DURATION_S=2.0` /
+`WARMUP_FRAC=0.1` are adequate (no meaningful warm-up bias at these
+settings). Bootstrap percentile CIs and multi-seed queue aggregation both
+ran without incident on the real decoders.
+
+This was still `--quick` mode (300 shots/physical-error-rate in Phase 3,
+3 queue-sim seeds) -- good enough to confirm nothing is broken, not enough
+for reportable numbers. **Next step: run the full (non-`--quick`) pipeline**
+for numbers that could go in the paper, and (separately) run with beam
+search enabled (drop `--skip-beamsearch`) at least once to confirm that
+still builds cleanly on Colab too.
+
 ## Working style notes (for whoever/whatever continues this)
 
 - The user works in Hinglish; response style has been informal, in Hindi/Hinglish,
