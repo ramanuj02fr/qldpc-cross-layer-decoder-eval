@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# generated at runtime
+figures/
+*.csv
+environment_info.txt
+all_figures.zip
+BeamSearchDecoder/
+build/
+
+# editor
+.vscode/
+.idea/

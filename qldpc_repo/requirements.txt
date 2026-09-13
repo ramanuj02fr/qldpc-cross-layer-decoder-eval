@@ -1,0 +1,14 @@
+# Core dependencies for Phases 1, 2A, 2B, 3, 4, 5 (everything except the
+# optional Beam Search decoder in Phase 2C).
+qldpc
+ldpc
+stim
+sinter
+sympy
+numpy
+scipy
+pandas
+matplotlib
+
+# Beam Search decoder (Phase 2C, optional) needs its own extra pinned deps --
+# see requirements-beamsearch.txt and README.md "Optional: Beam Search decoder".

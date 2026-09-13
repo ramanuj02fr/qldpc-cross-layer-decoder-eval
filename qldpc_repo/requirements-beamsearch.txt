@@ -1,0 +1,15 @@
+# Extra dependencies for the optional Beam Search decoder (Phase 2C).
+#
+# IMPORTANT -- install order matters, see README.md "Optional: Beam Search
+# decoder" for why. Do NOT just `pip install -r requirements-beamsearch.txt`;
+# use scripts/install_beamsearch.sh, or call
+# qldpc_eval.beam_search_setup.build_beam_search() from Python, instead.
+#
+# PyMatching==2.2.1's own metadata hard-pins numpy==1.*, which is stale (it
+# predates numpy 2.0) and conflicts with this project's numpy>=2 requirement.
+# PyMatching and stimbposd must be installed with --no-deps to avoid pip
+# force-downgrading numpy; see beam_search_setup.py for the verified fix.
+Cython==3.0.10
+networkx==3.3
+PyMatching==2.2.1
+stimbposd==0.1.0
