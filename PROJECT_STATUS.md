@@ -235,6 +235,75 @@ vs BP-LSD on the actual code.
    "statistically indistinguishable" claims instead of eyeballing CI overlap.
 4. **Verify references [8] and [9]** against primary sources.
 5. Medium/lower priority items from the paper review list above, as time allows.
+6. **Consider an MWPM (PyMatching) baseline** as a fourth decoder in the
+   comparison. Deliberately deferred (not started): PyMatching is designed for
+   graphlike (surface-code-style) check matrices, and this BB code's check
+   matrix is not graphlike in general, so getting PyMatching to run on it
+   requires either `Matching.from_check_matrix` (an approximate, lossy
+   conversion) or a custom matching-graph construction -- nontrivial extra
+   engineering for a result that's already well known to typically favor
+   BP-family decoders on qLDPC codes. Lower priority than the items above
+   unless a reviewer specifically asks for it.
+
+## Fix #3 (2026-09-14): statistical rigor gaps in the plain-Python repo port
+
+Beyond the notebook fixes above, a second review pass (this time of the
+`qldpc-cross-layer-decoder-eval` repo the notebook was ported into, see
+below) surfaced 6 more gaps, mostly about missing uncertainty quantification.
+Addressed so far, in priority order:
+
+1. **Runtime percentiles (p50/p95/p99/p99.9) had no CI, only point
+   estimates** -- despite the paper's central argument resting on tail
+   latency specifically. Fixed: `benchmark.bootstrap_percentile_ci()` (1000
+   resamples by default) now backs every percentile in
+   `summarise_with_ci()`; `plotting.py`'s runtime and LER-vs-p99 figures show
+   these as shaded bands / error bars. **Verified**: ran on synthetic data,
+   confirmed bootstrap CIs come out sane (CI width shrinks with more shots,
+   contains the point estimate) and both figures render.
+2. **Queue simulation used a single seed** -- a headline number like "EDF
+   gives a 60% relative reduction in miss rate" was based on one random
+   arrival-sequence draw. Fixed: `queue_sim.simulate_queue_multi_seed()` runs
+   N independent seeds (10 by default, 3 in `--quick`) and reports mean +/-
+   standard error; `run_full_experiment.py` and `plot_missrate_vs_workload`
+   updated to use it. **Verified**: ran on synthetic data, confirmed
+   per-seed values vary as expected and aggregation produces sane stderr.
+3. **Simulation duration (2s) risked warm-up/transient bias in the burst
+   (mild-overload, 1.05x) scenario**, since the queue starts empty at t=0.
+   Fixed: added a `warmup_s` parameter to both `simulate_queue` and
+   `simulate_queue_edf` (jobs still pass through the server during warm-up,
+   keeping the queue in a realistic non-empty state, but are excluded from
+   reported metrics). `run_full_experiment.py` now also prints an automatic
+   sensitivity check (3 duration/warmup combinations) for the burst scenario
+   so a reader can see directly whether the default settings are stable.
+   **Verified**: ran on synthetic data; results with/without warmup differed
+   only slightly (as expected for a sane default), confirming the check
+   itself works, though the *real* circuit data hasn't been run through it
+   yet (needs a live Python/qldpc environment, not yet done this session).
+4. **Deadline sweep range (200us-10ms) had no stated hardware grounding.**
+   Fixed: added a README section citing Google's Willow processor's 1.1us
+   syndrome-extraction cycle (Acharya et al., Nature 2025,
+   arXiv:2408.13687) as the grounding for the realistic end of the range,
+   with an explicit caveat that this is one processor generation's number,
+   not a universal constant, and that this pipeline's decoders aren't
+   benchmarked at sub-microsecond resolution.
+5. **i.i.d. service-time assumption in the queue simulator** -- already
+   somewhat implicit, now written up explicitly as Threats to Validity item
+   9 in README.md: real decoder runtime could plausibly be autocorrelated
+   (e.g. noise bursts causing several consecutive slow shots), which would
+   make queueing effects worse than this simulator predicts. Documented as a
+   known limitation, not fixed in code -- fixing it needs a model of *why*
+   runtime varies shot to shot plus a temporal correlation structure, judged
+   out of scope for now.
+6. **MWPM (PyMatching) as a 4th baseline decoder** -- deliberately NOT done,
+   see item 6 in "Next steps" above for why (nontrivial engineering, and the
+   expected result is already well-established in the literature).
+
+**Not yet done from this pass:** none of items 1-5 above have been re-run
+against the *actual* `[[144,12,12]]` circuit data end-to-end (only tested
+against synthetic data in this session, since a live `qldpc`/`ldpc` install
++ multi-minute run wasn't done this pass) -- next session should run
+`scripts/run_full_experiment.py` for real and sanity-check the new CI widths
+and multi-seed queue numbers on actual data, not just synthetic smoke tests.
 
 ## Working style notes (for whoever/whatever continues this)
 

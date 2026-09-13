@@ -5,9 +5,13 @@ also the Beam Search decoder) on a `[[144,12,12]]` Bivariate Bicycle (BB) code:
 
 1. Code-capacity + circuit-level logical error rate (LER), with statistical
    rigor (Wilson score confidence intervals, adaptive shot allocation).
-2. Per-shot runtime distributions across multiple physical error rates.
-3. FIFO vs. EDF (deadline-driven) queueing simulation, to test whether the
-   fastest-average decoder is actually the best real-time decoder.
+2. Per-shot runtime distributions across multiple physical error rates, with
+   bootstrap confidence intervals on tail percentiles (p50/p95/p99/p99.9) --
+   not just point estimates, since the real-time argument rests on the tail.
+3. FIFO vs. EDF (deadline-driven) queueing simulation across multiple
+   independent arrival-sequence seeds (mean +/- standard error, not a
+   single random draw), to test whether the fastest-average decoder is
+   actually the best real-time decoder.
 
 **Central finding:** BP-OSD and BP-LSD are statistically tied on LER at every
 physical error rate tested, but BP-LSD's runtime grows substantially faster
@@ -94,7 +98,34 @@ decodes correctly on numpy 2.5.x. The fix, applied in both
 `PyMatching` and `stimbposd` with `--no-deps` so pip doesn't try to "fix"
 numpy's version.
 
-## Threats to Validity
+## Deadline range used in the queue simulator
+
+`scripts/run_full_experiment.py` sweeps deadlines from 200 microseconds to 10
+milliseconds (`DEADLINE_VALUES_S`). This range is grounded in reported
+superconducting-qubit surface-code cycle times, not chosen arbitrarily:
+Google's Willow processor runs a syndrome-extraction cycle every
+**1.1 microseconds**, and the classical decoder must keep pace with that
+cycle to avoid an exponential syndrome backlog (Acharya et al., "Quantum
+error correction below the surface code threshold," *Nature* (2025),
+[arXiv:2408.13687](https://arxiv.org/abs/2408.13687)). The lower end of the
+sweep (200 microseconds) is a small integer multiple of that per-cycle
+budget; the upper end (10 milliseconds) intentionally goes far beyond any
+realistic per-cycle deadline so the crossover plot (`08_phase5_crossover`)
+shows the full miss-rate-vs-deadline curve, including the regime where the
+deadline stops being the binding constraint. The 500-microsecond default
+used elsewhere (`DEADLINE_S`) sits inside that realistic range as a single
+representative point.
+
+Two caveats: (1) this pipeline's decoders are not currently benchmarked at
+sub-microsecond resolution, so results here should be read as "how would
+these software decoders fare if a hardware system needed X," not as a claim
+that any of them meet the true 1.1 microsecond per-cycle deadline in
+absolute terms -- see Threats to Validity #1 below. (2) 1.1 microseconds is
+specific to one processor generation (Google Willow); other superconducting
+platforms and other qubit modalities (e.g. trapped ion, neutral atom) have
+different cycle times, so this single citation should not be read as a
+universal constant.
+
 
 Be upfront about these if reporting the numbers this pipeline produces:
 
@@ -128,6 +159,20 @@ Be upfront about these if reporting the numbers this pipeline produces:
    not yet been tied to the code's distance bound.
 8. **No correlated/biased noise model tested** -- only i.i.d. bit-flip
    (code-capacity) and i.i.d. depolarizing (circuit-level).
+9. **Queue simulator draws service times i.i.d. with replacement** from a
+   fixed empirical runtime distribution (`queue_sim.simulate_queue[_edf]`
+   uses `rng.choice(service_times_s, replace=True)` per job). Real decoder
+   runtime can be autocorrelated in practice -- e.g. if the physical noise
+   process itself has bursts (crosstalk events, cosmic-ray-induced leakage,
+   thermal drift), consecutive shots can plausibly all be slow together
+   rather than each being an independent draw. This would make queueing
+   effects (both FIFO and EDF) worse than this simulator predicts, since
+   correlated slow jobs pile up rather than being smoothed out by
+   intervening fast ones. Not fixed here -- flagged as a limitation. A
+   direct fix would need a model of *why* runtime varies shot-to-shot (e.g.
+   number of BP iterations before convergence, whether OSD/LSD
+   post-processing triggered) and a temporal correlation structure for that
+   cause, which is beyond this pipeline's current scope.
 
 See `PROJECT_STATUS.md` for the full paper-review findings and priority order
 of open items.
