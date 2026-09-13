@@ -129,28 +129,55 @@ def plot_ler_vs_p99(ref_summary_df, reference_p: float, figures_dir: str):
 def plot_circuit_level_ler(circuit_df, code_obj, figures_dir: str):
     """Phase 3 figure: circuit-level LER vs physical error rate (the MAIN
     result), with Wilson 95% CI bands and 0-error points marked as upper bounds.
+
+    IMPORTANT (bug fixed after real-data testing on Colab, 2026-09):
+    0-error points have no meaningful LER *value* -- only an upper bound. The
+    solid line is only drawn through points with >=1 observed error; 0-error
+    points are shown *only* as a downward-triangle marker at their Wilson CI
+    upper bound, connected to their nearest solid neighbor with a thin dotted
+    line (not solid), so the plot can't be misread as claiming a real LER
+    value for a point that's actually just "somewhere at or below this line".
+    The previous version clipped 0-error points to an arbitrary 1e-7 floor
+    and drew a solid line through it, which visually implied a specific
+    (fictional) LER value and a correspondingly fictional steep slope.
     """
     fig, ax = plt.subplots(figsize=(6.5, 5.5))
     for label, g in circuit_df.groupby("decoder"):
         g = g.sort_values("prob")
-        line, = ax.plot(g["prob"], g["logical_error_rate"].clip(lower=1e-7), marker="o", label=label)
-        ax.fill_between(
-            g["prob"],
-            g["ci_lower"].clip(lower=1e-7),
-            g["ci_upper"].clip(lower=1e-7),
-            color=line.get_color(), alpha=0.2,
-        )
-        ub_only = g[g["is_upper_bound_only"]]
-        if len(ub_only):
-            ax.scatter(ub_only["prob"], ub_only["ci_upper"].clip(lower=1e-7),
-                       marker="v", s=60, color=line.get_color(), zorder=5)
+        color = None
+        solid = g[~g["is_upper_bound_only"]]
+        bound_only = g[g["is_upper_bound_only"]]
+
+        if len(solid):
+            line, = ax.plot(solid["prob"], solid["logical_error_rate"], marker="o", label=label)
+            color = line.get_color()
+            ax.fill_between(solid["prob"], solid["ci_lower"].clip(lower=1e-12),
+                             solid["ci_upper"], color=color, alpha=0.2)
+        else:
+            # every point for this decoder was 0-error; still needs a legend entry
+            (line,) = ax.plot([], [], marker="o", label=label)
+            color = line.get_color()
+
+        if len(bound_only):
+            ax.scatter(bound_only["prob"], bound_only["ci_upper"], marker="v", s=70,
+                       color=color, zorder=5, edgecolors="black", linewidths=0.6)
+            # thin dotted connector from each bound-only point to its nearest
+            # solid neighbor in physical-error-rate, purely to show it belongs
+            # to the same decoder's series -- never solid, never implies a value
+            if len(solid):
+                for _, row in bound_only.iterrows():
+                    nearest = solid.iloc[(solid["prob"] - row["prob"]).abs().argsort().iloc[0]]
+                    ax.plot([row["prob"], nearest["prob"]], [row["ci_upper"], nearest["logical_error_rate"]],
+                           linestyle=":", linewidth=1, color=color, alpha=0.6, zorder=1)
+
     ax.axline((0, 0), slope=1, color="k", linestyle=":", label=r"$p_{log}=p_{phys}$")
     ax.loglog()
     ax.set_xlabel("physical error rate (per-gate depolarizing)")
     ax.set_ylabel("logical error rate")
     ax.set_title(
         f"Circuit-level LER -- n={len(code_obj)}, k={code_obj.dimension} code\n"
-        "(adaptive shots, Wilson 95% CI; downward triangle = 0-error upper bound)"
+        "(adaptive shots, Wilson 95% CI; downward triangle = 0-error upper bound,\n"
+        "dotted line = no real value known between points)"
     )
     ax.legend()
     ax.grid(which="both")
